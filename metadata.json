@@ -1,0 +1,6 @@
+{
+  "name": "Teclado Personalizado",
+  "description": "Aplicativo nativo de teclado Android (IME) com previsão de palavras, painel de emojis, múltiplos idiomas, temas personalizáveis e feedback tátil e sonoro.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
