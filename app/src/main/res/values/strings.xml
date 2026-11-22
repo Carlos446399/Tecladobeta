@@ -41,4 +41,6 @@
     <string name="translate_desc">Traduza textos instantaneamente sem conexão após baixar o modelo</string>
     <string name="stickers_title">Figurinhas &amp; Emojis</string>
     <string name="stickers_desc">Figurinhas exclusivas sem conexão e envio rápido</string>
+    <string name="floating_reader_service_name">Leitor flutuante de texto</string>
+    <string name="floating_reader_accessibility_description">Permite localizar o texto visível sob a bolha e solicitar sua leitura em voz alta quando o usuário arrasta e solta o controle. O mecanismo de voz do aparelho pode ter seu próprio tratamento de rede.</string>
 </resources>

@@ -229,7 +229,9 @@ private fun AlphabetLayout(
 
     // Row 2 Rendering
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().then(
+            if (cornerRadius < 0.dp) Modifier.padding(horizontal = 16.dp) else Modifier
+        ),
         horizontalArrangement = Arrangement.Center
     ) {
         if (language == KeyboardLanguage.EN_US) {
@@ -462,7 +464,11 @@ private fun NumbersLayout(
     }
 
     // Row 2
-    Row(modifier = Modifier.fillMaxWidth()) {
+    Row(
+        modifier = Modifier.fillMaxWidth().then(
+            if (cornerRadius < 0.dp) Modifier.padding(horizontal = 16.dp) else Modifier
+        )
+    ) {
         row2.forEach { char ->
             KeyboardKey(
                 modifier = Modifier.weight(1f),
@@ -654,7 +660,11 @@ private fun SymbolsLayout(
     }
 
     // Row 2
-    Row(modifier = Modifier.fillMaxWidth()) {
+    Row(
+        modifier = Modifier.fillMaxWidth().then(
+            if (cornerRadius < 0.dp) Modifier.padding(horizontal = 16.dp) else Modifier
+        )
+    ) {
         row2.forEach { char ->
             KeyboardKey(
                 modifier = Modifier.weight(1f),

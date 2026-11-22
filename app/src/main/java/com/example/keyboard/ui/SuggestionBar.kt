@@ -49,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -56,6 +57,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.keyboard.reader.FloatingReaderPreferences
 import com.example.keyboard.model.KeyboardLanguage
 import com.example.keyboard.model.KeyboardThemeColors
 
@@ -81,11 +83,16 @@ fun SuggestionBar(
     onOpenTranslate: () -> Unit = {},
     onOpenOcr: () -> Unit = {},
     onOpenSettings: () -> Unit,
+    onToggleFloatingReader: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val phrasesScrollState = rememberScrollState()
     val toolsScrollState = rememberScrollState()
     var isShieldToolsOpen by remember { mutableStateOf(false) }
+    var isFloatingReaderEnabled by remember(context) {
+        mutableStateOf(FloatingReaderPreferences.isEnabled(context))
+    }
 
     val infiniteTransition = rememberInfiniteTransition(label = "micPulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -108,6 +115,7 @@ fun SuggestionBar(
     ) {
         AnimatedContent(
             targetState = isShieldToolsOpen,
+            modifier = Modifier.fillMaxWidth().padding(end = 38.dp),
             transitionSpec = { fadeIn() togetherWith fadeOut() },
             label = "shieldDrawerTransition"
         ) { toolsOpen ->
@@ -120,7 +128,7 @@ fun SuggestionBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // Shield Badge Active Indicator
+                    // The shield itself is anchored at the right edge; this label stays with the drawer.
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
@@ -135,12 +143,6 @@ fun SuggestionBar(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Security,
-                                contentDescription = "Escudo de Ferramentas",
-                                tint = colors.accentKeyBackground,
-                                modifier = Modifier.size(15.dp)
-                            )
                             Text(
                                 text = "Ferramentas",
                                 fontSize = 11.sp,
@@ -262,6 +264,39 @@ fun SuggestionBar(
                             tint = colors.keyTextColor,
                             modifier = Modifier.size(18.dp)
                         )
+                    }
+
+                    // Floating reader visibility toggle
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isFloatingReaderEnabled) colors.accentKeyBackground.copy(alpha = 0.2f) else colors.actionKeyBackground)
+                            .clickable {
+                            val nextEnabled = !isFloatingReaderEnabled
+                            isFloatingReaderEnabled = nextEnabled
+                            onToggleFloatingReader(nextEnabled)
+                            }
+                            .padding(horizontal = 7.dp, vertical = 5.dp)
+                            .testTag("shield_tool_floating_reader"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isFloatingReaderEnabled) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = null,
+                                tint = if (isFloatingReaderEnabled) colors.accentKeyBackground else colors.keyTextColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = if (isFloatingReaderEnabled) "Bolha ON" else "Bolha OFF",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.keyTextColor
+                            )
+                        }
                     }
 
                     // 7. Settings Tool
@@ -543,24 +578,38 @@ fun SuggestionBar(
                         )
                     }
 
-                    // Shield Guard Button (Replaces gear icon to guard/store all tools)
                     IconButton(
-                        onClick = { isShieldToolsOpen = true },
+                        onClick = onOpenTranslate,
                         modifier = Modifier
                             .size(34.dp)
-                            .testTag("suggestion_shield_btn")
+                            .testTag("suggestion_translate_btn")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Security,
-                            contentDescription = "Guardar Ferramentas (Escudo)",
-                            tint = colors.accentKeyBackground,
-                            modifier = Modifier.size(19.dp)
+                            imageVector = Icons.Default.Translate,
+                            contentDescription = "Abrir tradução",
+                            tint = colors.keySecondaryTextColor,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
+
                 }
             }
         }
+
+        // Fixed shield: tool icons slide in/out to its left without moving this control.
+        IconButton(
+            onClick = { isShieldToolsOpen = !isShieldToolsOpen },
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .size(34.dp)
+                .testTag("suggestion_shield_btn")
+        ) {
+            Icon(
+                imageVector = Icons.Default.Security,
+                contentDescription = if (isShieldToolsOpen) "Recolher Ferramentas" else "Abrir Ferramentas",
+                tint = colors.accentKeyBackground,
+                modifier = Modifier.size(19.dp)
+            )
+        }
     }
 }
-
-

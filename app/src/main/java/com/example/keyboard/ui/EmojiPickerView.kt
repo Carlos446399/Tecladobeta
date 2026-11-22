@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -48,13 +49,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.keyboard.data.EmojiData
 import com.example.keyboard.model.KeyboardThemeColors
+import com.example.stickers.GiphyMediaItem
 import com.example.stickers.StickerData
 import com.example.stickers.StickerItem
 
 enum class MediaTab {
     EMOJI,
     STICKERS,
-    GIFS_COMING_SOON
+    GIFS
 }
 
 @Composable
@@ -62,6 +64,8 @@ fun EmojiPickerView(
     colors: KeyboardThemeColors,
     onEmojiSelected: (String) -> Unit,
     onStickerSelected: (StickerItem) -> Unit = {},
+    onGifSelected: (GiphyMediaItem) -> Unit = {},
+    allowOnlineSearch: Boolean = true,
     onBackspace: () -> Unit,
     onSwitchToAlphabet: () -> Unit,
     modifier: Modifier = Modifier
@@ -70,7 +74,9 @@ fun EmojiPickerView(
     var selectedEmojiCategoryIndex by remember { mutableIntStateOf(0) }
     var selectedStickerCategoryIndex by remember { mutableIntStateOf(0) }
 
-    val currentEmojiCategory = EmojiData.categories[selectedEmojiCategoryIndex]
+    val context = LocalContext.current
+    val emojiCategories = remember(context) { EmojiData.load(context) }
+    val currentEmojiCategory = emojiCategories.getOrElse(selectedEmojiCategoryIndex) { emojiCategories.first() }
     val currentStickerCategory = StickerData.categories[selectedStickerCategoryIndex]
 
     Column(
@@ -137,31 +143,26 @@ fun EmojiPickerView(
                 }
             }
 
-            // GIFs (Em breve) - Explicitly disabled item per specification
+            // GIF search is available through an explicitly configured provider.
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (activeTab == MediaTab.GIFS_COMING_SOON) colors.keyBackground.copy(alpha = 0.5f) else Color.Transparent)
-                    .clickable { activeTab = MediaTab.GIFS_COMING_SOON }
+                    .background(if (activeTab == MediaTab.GIFS) colors.keyBackground else Color.Transparent)
+                    .clickable { activeTab = MediaTab.GIFS }
                     .padding(horizontal = 8.dp, vertical = 6.dp)
-                    .testTag("tab_gifs_disabled"),
+                    .testTag("tab_gifs"),
                 contentAlignment = Alignment.Center
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Desabilitado",
-                        tint = colors.keySecondaryTextColor.copy(alpha = 0.7f),
-                        modifier = Modifier.size(12.dp)
-                    )
+                    Text("GIF", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = colors.accentKeyBackground)
                     Text(
-                        text = "GIFs (em breve)",
+                        text = "GIFs",
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = colors.keySecondaryTextColor.copy(alpha = 0.7f)
+                        fontWeight = if (activeTab == MediaTab.GIFS) FontWeight.Bold else FontWeight.Medium,
+                        color = if (activeTab == MediaTab.GIFS) colors.accentKeyBackground else colors.keyTextColor
                     )
                 }
             }
@@ -179,7 +180,7 @@ fun EmojiPickerView(
                     divider = {},
                     modifier = Modifier.fillMaxWidth().height(36.dp)
                 ) {
-                    EmojiData.categories.forEachIndexed { index, category ->
+                    emojiCategories.forEachIndexed { index, category ->
                         val isSelected = selectedEmojiCategoryIndex == index
                         Tab(
                             selected = isSelected,
@@ -304,46 +305,13 @@ fun EmojiPickerView(
                 }
             }
 
-            MediaTab.GIFS_COMING_SOON -> {
-                // Disabled GIFs screen with privacy & offline notice
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(colors.actionKeyBackground)
-                            .padding(16.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = null,
-                            tint = colors.accentKeyBackground,
-                            modifier = Modifier.size(28.dp)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "GIFs Online Desabilitados",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = colors.keyTextColor
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Para manter o FlexiKey 100% offline, sem rastreadores ou chamadas para servidores externos (GIPHY/Tenor), o recurso de GIFs permanece desativado.",
-                            fontSize = 11.sp,
-                            color = colors.keySecondaryTextColor,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
+            MediaTab.GIFS -> {
+                GiphyMediaPanel(
+                    colors = colors,
+                    onMediaSelected = onGifSelected,
+                    allowOnlineSearch = allowOnlineSearch,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
 

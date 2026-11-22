@@ -1,4 +1,5 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.util.Properties
 
 plugins {
   alias(libs.plugins.android.application)
@@ -9,6 +10,13 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+val localProperties = Properties().apply {
+  val propertiesFile = rootProject.file("local.properties")
+  if (propertiesFile.exists()) propertiesFile.inputStream().use { load(it) }
+}
+val giphyApiKey = localProperties.getProperty("GIPHY_API_KEY", "")
+val escapedGiphyApiKey = giphyApiKey.replace("\\", "\\\\").replace("\"", "\\\"")
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -17,8 +25,9 @@ android {
     applicationId = "com.aistudio.customkeyboard.vtqkmz"
     minSdk = 24
     targetSdk = 36
-    versionCode = 2
-    versionName = "1.1"
+    versionCode = 3
+    versionName = "1.2"
+    buildConfigField("String", "GIPHY_API_KEY", "\"$escapedGiphyApiKey\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -100,7 +109,7 @@ dependencies {
   // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
-  // implementation(libs.coil.compose)
+  implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   implementation(libs.firebase.ai)
   // Uncomment to use Firestore:

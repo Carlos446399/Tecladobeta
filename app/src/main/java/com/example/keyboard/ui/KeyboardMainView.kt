@@ -1,13 +1,17 @@
 package com.example.keyboard.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -27,6 +31,7 @@ import com.example.keyboard.model.KeyboardMode
 import com.example.keyboard.model.KeyboardSettings
 import com.example.keyboard.model.KeyboardThemeColorsFactory
 import com.example.keyboard.model.ShiftState
+import com.example.stickers.GiphyMediaItem
 import com.example.stickers.StickerItem
 import com.example.translation.TranslationManager
 import com.example.translation.TranslationPanelView
@@ -56,9 +61,12 @@ fun KeyboardMainView(
     onDeleteClip: (Long) -> Unit = {},
     onClearAllClips: () -> Unit = {},
     onStickerSelected: (StickerItem) -> Unit = {},
+    onGifSelected: (GiphyMediaItem) -> Unit = {},
     onOpenOcr: () -> Unit = {},
     onOpenSettings: () -> Unit,
+    onToggleFloatingReader: (Boolean) -> Unit = {},
     onHideKeyboard: () -> Unit,
+    getSelectedTextForTranslation: () -> String = { "" },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -67,13 +75,17 @@ fun KeyboardMainView(
     var mode by remember { mutableStateOf(KeyboardMode.LETTERS) }
     var shiftState by remember { mutableStateOf(ShiftState.OFF) }
     var isQuickPhrasesMode by remember { mutableStateOf(false) }
+    var translationInputText by remember { mutableStateOf("") }
+    var translationKeyboardMode by remember { mutableStateOf(KeyboardMode.LETTERS) }
+    var translationShiftState by remember { mutableStateOf(ShiftState.OFF) }
 
     // Adaptive Chameleon Theme Resolution (overrides default theme if enabled and match exists)
-    val effectiveColors = remember(settings.themeType, settings.accentColorType, settings.adaptiveThemeEnabled, activePackageName) {
+    val effectiveColors = remember(settings.themeType, settings.accentColorType, settings.adaptiveThemeEnabled, settings.ledEffectEnabled, activePackageName) {
         val adaptivePair = if (settings.adaptiveThemeEnabled) AppThemeMapper.resolve(activePackageName) else null
         val targetTheme = adaptivePair?.first ?: settings.themeType
         val targetAccent = adaptivePair?.second ?: settings.accentColorType
         KeyboardThemeColorsFactory.getColors(targetTheme, targetAccent)
+            .copy(ledEffectEnabled = settings.ledEffectEnabled)
     }
 
     val finalBackground = if (isIncognitoActive) {
@@ -101,10 +113,10 @@ fun KeyboardMainView(
             .background(finalBackground)
             .navigationBarsPadding()
     ) {
-        // Suggestion Bar (only shown when suggestions are enabled and not in emoji / clipboard / translate mode)
-        if (settings.suggestionsEnabled && mode != KeyboardMode.EMOJI && mode != KeyboardMode.CLIPBOARD && mode != KeyboardMode.TRANSLATE) {
+        // Keep the top strip reserved in every mode so the keyboard does not jump vertically.
+        if (mode != KeyboardMode.EMOJI && mode != KeyboardMode.CLIPBOARD && mode != KeyboardMode.TRANSLATE) {
             SuggestionBar(
-                suggestions = suggestions,
+                suggestions = if (settings.suggestionsEnabled) suggestions else emptyList(),
                 quickPhrases = toneSortedPhrases,
                 quickPhraseCategoryBadge = quickPhraseCategoryBadge,
                 isQuickPhrasesMode = isQuickPhrasesMode,
@@ -134,16 +146,26 @@ fun KeyboardMainView(
                     mode = KeyboardMode.CLIPBOARD
                 },
                 onOpenTranslate = {
+                    translationInputText = getSelectedTextForTranslation()
+                    translationKeyboardMode = KeyboardMode.LETTERS
+                    translationShiftState = ShiftState.OFF
                     mode = KeyboardMode.TRANSLATE
                 },
                 onOpenOcr = onOpenOcr,
-                onOpenSettings = onOpenSettings
+                onOpenSettings = onOpenSettings,
+                onToggleFloatingReader = onToggleFloatingReader
             )
+        } else {
+            Spacer(modifier = Modifier.fillMaxWidth().height(44.dp))
         }
 
         AnimatedContent(
             targetState = mode,
-            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            transitionSpec = {
+                (fadeIn(animationSpec = tween(durationMillis = 90)) togetherWith
+                    fadeOut(animationSpec = tween(durationMillis = 70))) using
+                    SizeTransform(clip = false) { _, _ -> tween(durationMillis = 0) }
+            },
             label = "keyboardModeTransition"
         ) { currentMode ->
             when (currentMode) {
@@ -156,6 +178,8 @@ fun KeyboardMainView(
                         onStickerSelected = { sticker ->
                             onStickerSelected(sticker)
                         },
+                        onGifSelected = onGifSelected,
+                        allowOnlineSearch = !isSecureFieldActive && !isIncognitoActive,
                         onBackspace = onBackspace,
                         onSwitchToAlphabet = {
                             mode = KeyboardMode.LETTERS
@@ -179,17 +203,54 @@ fun KeyboardMainView(
                     )
                 }
                 KeyboardMode.TRANSLATE -> {
-                    TranslationPanelView(
-                        translationManager = translationManager,
-                        colors = effectiveColors,
-                        onInsertText = { translatedText ->
-                            onCharTyped(translatedText)
-                            mode = KeyboardMode.LETTERS
-                        },
-                        onClose = {
-                            mode = KeyboardMode.LETTERS
-                        }
-                    )
+                    Column {
+                        TranslationPanelView(
+                            translationManager = translationManager,
+                            colors = effectiveColors,
+                            inputText = translationInputText,
+                            onInputTextChange = { translationInputText = it },
+                            onInsertText = { translatedText ->
+                                onCharTyped(translatedText)
+                                mode = KeyboardMode.LETTERS
+                            },
+                            onClose = {
+                                mode = KeyboardMode.LETTERS
+                            }
+                        )
+                        KeyboardLayout(
+                            mode = translationKeyboardMode,
+                            shiftState = translationShiftState,
+                            imeAction = imeAction,
+                            settings = settings.copy(showEmojiKey = false),
+                            colors = effectiveColors,
+                            onChar = { char ->
+                                translationInputText += char
+                                if (translationShiftState == ShiftState.SHIFTED) translationShiftState = ShiftState.OFF
+                            },
+                            onBackspace = {
+                                if (translationInputText.isNotEmpty()) {
+                                    val end = translationInputText.offsetByCodePoints(translationInputText.length, -1)
+                                    translationInputText = translationInputText.substring(0, end)
+                                }
+                            },
+                            onSpace = { translationInputText += " " },
+                            onEnter = { translationInputText += "\n" },
+                            onShiftToggle = {
+                                translationShiftState = when (translationShiftState) {
+                                    ShiftState.OFF -> ShiftState.SHIFTED
+                                    ShiftState.SHIFTED -> ShiftState.CAPS_LOCKED
+                                    ShiftState.CAPS_LOCKED -> ShiftState.OFF
+                                }
+                            },
+                            onModeChange = { requestedMode ->
+                                if (requestedMode == KeyboardMode.LETTERS || requestedMode == KeyboardMode.NUMBERS || requestedMode == KeyboardMode.SYMBOLS) {
+                                    translationKeyboardMode = requestedMode
+                                }
+                            },
+                            onLanguageToggle = {},
+                            onHideKeyboard = { mode = KeyboardMode.LETTERS }
+                        )
+                    }
                 }
                 else -> {
                     KeyboardLayout(

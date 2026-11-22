@@ -32,12 +32,15 @@ import com.example.MainActivity
 import com.example.keyboard.data.AppPhrasesRepository
 import com.example.keyboard.data.ClipboardHistoryRepository
 import com.example.keyboard.data.InferredTone
+import com.example.keyboard.data.GraphemeDeletion
 import com.example.keyboard.data.KeyboardSettingsRepository
 import com.example.keyboard.data.KeyboardStatsRepository
 import com.example.keyboard.data.TextShortcutRepository
+import com.example.keyboard.data.UnknownWordLearningTracker
 import com.example.keyboard.data.UserDictionaryRepository
 import com.example.keyboard.data.WordDictionary
 import com.example.keyboard.model.KeyboardLanguage
+import com.example.keyboard.reader.FloatingReaderPreferences
 import com.example.keyboard.ui.KeyboardMainView
 import com.example.keyboard.voice.VoiceBridge
 import com.example.keyboard.voice.VoiceBridgeActivity
@@ -45,6 +48,8 @@ import com.example.keyboard.voice.VoiceInputManager
 import com.example.keyboard.voice.VoiceRecognitionState
 import com.example.ocr.OcrBridge
 import com.example.ocr.OcrScannerActivity
+import com.example.stickers.GiphyGifHelper
+import com.example.stickers.GiphyMediaItem
 import com.example.stickers.StickerHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -80,8 +85,10 @@ class CustomInputMethodService : InputMethodService(),
     private var isClipListenerRegistered = false
 
     private val currentWordBuffer = StringBuilder()
+    private val unknownWordLearningTracker = UnknownWordLearningTracker()
     private val _suggestions = MutableStateFlow<List<String>>(emptyList())
     val suggestions = _suggestions.asStateFlow()
+    private var lastSuggestionQuery: String? = null
 
     private val _quickPhrases = MutableStateFlow<List<String>>(emptyList())
     val quickPhrases = _quickPhrases.asStateFlow()
@@ -149,6 +156,7 @@ class CustomInputMethodService : InputMethodService(),
         lifecycleScope.launch(Dispatchers.IO) {
             WordDictionary.init(applicationContext)
             withContext(Dispatchers.Main) {
+                lastSuggestionQuery = null
                 updateSuggestions(currentWordBuffer.toString())
             }
         }
@@ -418,6 +426,25 @@ class CustomInputMethodService : InputMethodService(),
                             Toast.makeText(this@CustomInputMethodService, feedback, Toast.LENGTH_SHORT).show()
                         }
                     },
+                    onGifSelected = { item: GiphyMediaItem ->
+                        lifecycleScope.launch {
+                            try {
+                                val feedback = GiphyGifHelper.send(
+                                    context = this@CustomInputMethodService,
+                                    item = item,
+                                    inputConnection = currentInputConnection,
+                                    editorInfo = currentEditorInfo
+                                )
+                                Toast.makeText(this@CustomInputMethodService, feedback, Toast.LENGTH_SHORT).show()
+                            } catch (exception: Exception) {
+                                Toast.makeText(
+                                    this@CustomInputMethodService,
+                                    exception.message ?: "Não foi possível enviar este GIF.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    },
                     onOpenOcr = {
                         val intent = Intent(this@CustomInputMethodService, OcrScannerActivity::class.java).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -430,8 +457,23 @@ class CustomInputMethodService : InputMethodService(),
                         }
                         startActivity(intent)
                     },
+                    onToggleFloatingReader = { enabled ->
+                        FloatingReaderPreferences.setEnabled(this@CustomInputMethodService, enabled)
+                        if (enabled && !FloatingReaderPreferences.isAccessibilityServiceEnabled(this@CustomInputMethodService)) {
+                            Toast.makeText(
+                                this@CustomInputMethodService,
+                                "Ative o Serviço de Acessibilidade do Leitor flutuante nas configurações do Android.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    },
                     onHideKeyboard = {
                         requestHideSelf(0)
+                    },
+                    getSelectedTextForTranslation = {
+                        if (shouldSuppressDataCollection) "" else {
+                            currentInputConnection?.getSelectedText(0)?.toString()?.take(2000).orEmpty()
+                        }
                     }
                 )
             }
@@ -492,11 +534,15 @@ class CustomInputMethodService : InputMethodService(),
         currentWordBuffer.clear()
         currentWordBuffer.append(word)
 
-        if (!shouldSuppressDataCollection) {
-            updateSuggestions(word)
+        if (!shouldSuppressDataCollection && repository.settings.value.suggestionsEnabled) {
+            val previousWord = textBefore.dropLast(word.length).trimEnd()
+                .takeLastWhile { it.isLetterOrDigit() || it == '\'' || it == '’' }
+                .ifBlank { null }
+            updateSuggestions(word, previousWord)
             _inferredTone.value = AppPhrasesRepository.inferTone(textBefore)
         } else {
             _suggestions.value = emptyList()
+            lastSuggestionQuery = null
             _inferredTone.value = InferredTone.NEUTRAL
         }
     }
@@ -586,11 +632,16 @@ class CustomInputMethodService : InputMethodService(),
         if (!selectedText.isNullOrEmpty()) {
             ic.commitText("", 1)
         } else {
-            val before = ic.getTextBeforeCursor(1, 0)
-            if (before.isNullOrEmpty()) {
+            val before = ic.getTextBeforeCursor(128, 0)?.toString().orEmpty()
+            if (before.isEmpty()) {
                 sendDownUpKeyEvents(android.view.KeyEvent.KEYCODE_DEL)
             } else {
-                ic.deleteSurroundingText(1, 0)
+                val graphemeLength = GraphemeDeletion.previousClusterLength(before)
+                if (graphemeLength > 0) {
+                    ic.deleteSurroundingText(graphemeLength, 0)
+                } else {
+                    sendDownUpKeyEvents(android.view.KeyEvent.KEYCODE_DEL)
+                }
             }
         }
 
@@ -622,6 +673,15 @@ class CustomInputMethodService : InputMethodService(),
                 lastAutocorrectUndo = AutocorrectUndoState(originalWord = rawWord, committedText = committed)
 
                 recordWordComplete(expansion)
+                currentWordBuffer.clear()
+                updateSuggestions("")
+                return
+            }
+
+            if (learnUnknownWordIfConfirmed(rawWord, settings.language)) {
+                recordWordComplete(rawWord)
+                lastAutocorrectUndo = null
+                ic.commitText(separator, 1)
                 currentWordBuffer.clear()
                 updateSuggestions("")
                 return
@@ -676,6 +736,23 @@ class CustomInputMethodService : InputMethodService(),
         }
     }
 
+    private fun learnUnknownWordIfConfirmed(word: String, language: KeyboardLanguage): Boolean {
+        if (word.isBlank()) return false
+        val known = WordDictionary.isWordInDictionary(word, language)
+        val learnNow = unknownWordLearningTracker.recordAttempt(
+            word = word,
+            isKnown = known,
+            isSuppressed = shouldSuppressDataCollection || !WordDictionary.isInitialized
+        )
+        if (!learnNow) return false
+
+        // Add to the in-memory index immediately so the next keystroke cannot autocorrect it
+        // while Room persists the same word asynchronously.
+        WordDictionary.addUserCustomWord(word)
+        userDictionaryRepository.addWord(word, language.code.lowercase())
+        return true
+    }
+
     private fun handleEnter() {
         triggerFeedback()
         val ic = currentInputConnection ?: return
@@ -690,7 +767,9 @@ class CustomInputMethodService : InputMethodService(),
         }
 
         if (currentWordBuffer.isNotEmpty()) {
-            recordWordComplete(currentWordBuffer.toString())
+            val finishedWord = currentWordBuffer.toString()
+            learnUnknownWordIfConfirmed(finishedWord, repository.settings.value.language)
+            recordWordComplete(finishedWord)
         }
         currentWordBuffer.clear()
         if (!shouldSuppressDataCollection) {
@@ -751,12 +830,30 @@ class CustomInputMethodService : InputMethodService(),
     }
 
     private fun updateSuggestions(prefix: String) {
+        updateSuggestions(prefix, null)
+    }
+
+    private fun updateSuggestions(prefix: String, previousWord: String?) {
         if (shouldSuppressDataCollection) {
             _suggestions.value = emptyList()
+            lastSuggestionQuery = null
+            return
+        }
+        if (!repository.settings.value.suggestionsEnabled) {
+            _suggestions.value = emptyList()
+            lastSuggestionQuery = null
             return
         }
         val currentLang = repository.settings.value.language
-        _suggestions.value = WordDictionary.getSuggestions(prefix, currentLang)
+        val contextWord = previousWord ?: if (prefix.isBlank()) {
+            currentInputConnection?.getTextBeforeCursor(120, 0)?.toString()?.trimEnd()
+                ?.takeLastWhile { it.isLetterOrDigit() || it == '\'' || it == '’' }
+                ?.ifBlank { null }
+        } else null
+        val queryKey = "${currentLang.code}|${prefix.lowercase()}|${contextWord.orEmpty().lowercase()}"
+        if (queryKey == lastSuggestionQuery) return
+        lastSuggestionQuery = queryKey
+        _suggestions.value = WordDictionary.getSuggestions(prefix, currentLang, previousWord = contextWord)
     }
 
     private fun triggerFeedback() {
@@ -789,4 +886,3 @@ class CustomInputMethodService : InputMethodService(),
         }
     }
 }
-

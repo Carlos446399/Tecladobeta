@@ -33,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
@@ -83,7 +85,9 @@ fun KeyboardKey(
         label = "keyScale"
     )
 
-    val isBorderless = cornerRadius <= 0.5.dp
+    val isBorderless = cornerRadius == 0.dp
+    val isHexagonal = cornerRadius < 0.dp
+    val keyShape = if (isHexagonal) KeyHexagonShape else RoundedCornerShape(cornerRadius)
 
     val keyBackground = when {
         isAccent -> colors.accentKeyBackground
@@ -114,17 +118,37 @@ fun KeyboardKey(
                     if (elevation > 0.dp) {
                         Modifier.shadow(
                             elevation = elevation,
-                            shape = RoundedCornerShape(cornerRadius),
+                            shape = keyShape,
                             clip = false
                         )
                     } else Modifier
                 )
-                .clip(RoundedCornerShape(cornerRadius))
+                .clip(keyShape)
                 .background(keyBackground)
                 .then(
-                    if (colors.keyBorderColor != null && !isAccent && !isBorderless) {
-                        Modifier.border(1.dp, colors.keyBorderColor, RoundedCornerShape(cornerRadius))
-                    } else Modifier
+                    when {
+                        isHexagonal -> Modifier.border(
+                            1.dp,
+                            Brush.linearGradient(listOf(Color(0xFFFFD978), Color(0xFFB8791C), Color(0xFFFFE6A3))),
+                            keyShape
+                        )
+                        colors.ledEffectEnabled && !isBorderless -> Modifier.border(
+                            1.4.dp,
+                            Brush.sweepGradient(
+                                listOf(
+                                    Color(0xFF00E5FF), Color(0xFF7C4DFF), Color(0xFFFF2D95),
+                                    Color(0xFFFFC400), Color(0xFF00E676), Color(0xFF00E5FF)
+                                )
+                            ),
+                            keyShape
+                        )
+                        colors.keyBorderColor != null && !isAccent && !isBorderless -> Modifier.border(
+                            1.dp,
+                            colors.keyBorderColor,
+                            keyShape
+                        )
+                        else -> Modifier
+                    }
                 )
                 .pointerInput(isRepeatable, accents, onLongPress != null) {
                     awaitEachGesture {

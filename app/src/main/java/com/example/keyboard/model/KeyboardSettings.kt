@@ -9,7 +9,8 @@ enum class KeyboardThemeType(val id: String, val displayName: String) {
     PASTEL("pastel", "Pastel Suave"),
     NEON("neon", "Cyber Neon"),
     AURORA("aurora", "Aurora Boreal"),
-    HOLOGRAPHIC("holographic", "Holográfico")
+    HOLOGRAPHIC("holographic", "Holográfico"),
+    HONEYCOMB("honeycomb", "Colmeia Âmbar")
 }
 
 enum class AccentColorType(val id: String, val displayName: String, val color: Color) {
@@ -44,7 +45,8 @@ enum class KeyShapeStyle(
     ROUNDED("rounded", "Arredondadas", 8, 2.5f, 3.0f, true, "Bordas curvas confortáveis (Padrão)"),
     CIRCULAR("circular", "Redondas", 22, 3.0f, 3.5f, true, "Teclas em cápsula / circulares"),
     SQUARE("square", "Quadradas", 2, 2.0f, 2.5f, true, "Bordas retas e formato geométrico"),
-    BORDERLESS("borderless", "Sem Separação", 0, 0.5f, 1.0f, false, "Design contínuo e plano sem linhas")
+    BORDERLESS("borderless", "Sem Separação", 0, 0.5f, 1.0f, false, "Design contínuo e plano sem linhas"),
+    HEXAGON("hexagon", "Hexagonais", -1, 1.4f, 1.8f, true, "Grade colmeia com borda fina âmbar")
 }
 
 enum class ShiftState {
@@ -74,6 +76,7 @@ data class KeyboardSettings(
     val showNumberRow: Boolean = false,
     val adaptiveThemeEnabled: Boolean = true,
     val keySeparationEnabled: Boolean = true,
+    val ledEffectEnabled: Boolean = false,
     val keyShapeStyle: KeyShapeStyle = KeyShapeStyle.ROUNDED,
     val keySizeMode: KeySizeMode = KeySizeMode.MEDIUM,
     val conversationTranslateEnabled: Boolean = false,
@@ -123,7 +126,8 @@ data class KeyboardThemeColors(
     val suggestionTextColor: Color,
     val dividerColor: Color,
     val keyBorderColor: Color? = null,
-    val isIncognitoTint: Boolean = false
+    val isIncognitoTint: Boolean = false,
+    val ledEffectEnabled: Boolean = false
 )
 
 object KeyboardThemeColorsFactory {
@@ -223,6 +227,20 @@ object KeyboardThemeColorsFactory {
                 suggestionTextColor = Color(0xFFF3E8FF),
                 dividerColor = Color(0xFFA855F7).copy(alpha = 0.3f),
                 keyBorderColor = Color(0xFFC084FC).copy(alpha = 0.4f)
+            )
+            KeyboardThemeType.HONEYCOMB -> KeyboardThemeColors(
+                background = Color(0xFF090A0D),
+                keyBackground = Color(0xFF181612),
+                keyBackgroundPressed = Color(0xFF3C2C12),
+                actionKeyBackground = Color(0xFF14120E),
+                accentKeyBackground = Color(0xFFF2B84B),
+                keyTextColor = Color(0xFFFFF8E8),
+                keySecondaryTextColor = Color(0xFFC7A96B),
+                accentTextColor = Color(0xFF1C1608),
+                suggestionBackground = Color(0xFF100F0C),
+                suggestionTextColor = Color(0xFFFFF8E8),
+                dividerColor = Color(0xFFB9862F).copy(alpha = 0.35f),
+                keyBorderColor = Color(0xFFD5A84C).copy(alpha = 0.75f)
             )
         }
     }

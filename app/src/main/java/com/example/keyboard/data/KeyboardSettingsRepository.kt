@@ -28,6 +28,7 @@ class KeyboardSettingsRepository private constructor(context: Context) {
         val autoLang = prefs.getBoolean(KEY_AUTO_LANG, true)
         val showEmoji = prefs.getBoolean(KEY_SHOW_EMOJI, true)
         val showNumberRow = prefs.getBoolean(KEY_SHOW_NUMBER_ROW, false)
+        val ledEffect = prefs.getBoolean(KEY_LED_EFFECT, false)
         val vibrationDuration = prefs.getLong(KEY_VIBRATION_DURATION, 20L)
 
         val langCode = prefs.getString(KEY_LANGUAGE, KeyboardLanguage.PT_BR.code)
@@ -60,6 +61,7 @@ class KeyboardSettingsRepository private constructor(context: Context) {
             showNumberRow = showNumberRow,
             adaptiveThemeEnabled = adaptiveTheme,
             keySeparationEnabled = keySeparation,
+            ledEffectEnabled = ledEffect,
             keyShapeStyle = keyShapeStyle,
             keySizeMode = keySizeMode,
             conversationTranslateEnabled = conversationTranslate,
@@ -80,6 +82,11 @@ class KeyboardSettingsRepository private constructor(context: Context) {
             keyShapeStyle = style,
             keySeparationEnabled = style.hasElevation
         )
+    }
+
+    fun setLedEffectEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_LED_EFFECT, enabled).apply()
+        _settings.value = _settings.value.copy(ledEffectEnabled = enabled)
     }
 
     fun setAdaptiveThemeEnabled(enabled: Boolean) {
@@ -148,8 +155,21 @@ class KeyboardSettingsRepository private constructor(context: Context) {
     }
 
     fun setThemeType(themeType: KeyboardThemeType) {
-        prefs.edit().putString(KEY_THEME, themeType.id).apply()
-        _settings.value = _settings.value.copy(themeType = themeType)
+        val editor = prefs.edit().putString(KEY_THEME, themeType.id)
+        var updated = _settings.value.copy(themeType = themeType)
+        if (themeType == KeyboardThemeType.HONEYCOMB) {
+            editor.putString(KEY_KEY_SHAPE_STYLE, KeyShapeStyle.HEXAGON.id)
+                .putBoolean(KEY_ADAPTIVE_THEME, false)
+                .putString(KEY_ACCENT, AccentColorType.AMBER.id)
+            updated = updated.copy(
+                keyShapeStyle = KeyShapeStyle.HEXAGON,
+                keySeparationEnabled = true,
+                adaptiveThemeEnabled = false,
+                accentColorType = AccentColorType.AMBER
+            )
+        }
+        editor.apply()
+        _settings.value = updated
     }
 
     fun setAccentColorType(accentColorType: AccentColorType) {
@@ -173,6 +193,7 @@ class KeyboardSettingsRepository private constructor(context: Context) {
         private const val KEY_ADAPTIVE_THEME = "pref_adaptive_theme"
         private const val KEY_KEY_SEPARATION = "pref_key_separation"
         private const val KEY_KEY_SHAPE_STYLE = "pref_key_shape_style"
+        private const val KEY_LED_EFFECT = "pref_led_effect"
         private const val KEY_KEY_SIZE_MODE = "pref_key_size_mode"
         private const val KEY_CONVERSATION_TRANSLATE = "pref_conversation_translate"
 

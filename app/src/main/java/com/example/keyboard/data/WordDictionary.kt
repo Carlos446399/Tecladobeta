@@ -22,15 +22,33 @@ object WordDictionary {
     @Volatile
     private var loadedEnglishExactSet: Set<String> = emptySet()
     @Volatile
-    private var loadedPortugueseAccentMap: Map<String, String> = emptyMap()
+    private var loadedPortugueseAccentMap: Map<String, List<String>> = emptyMap()
     @Volatile
-    private var loadedEnglishAccentMap: Map<String, String> = emptyMap()
+    private var loadedEnglishAccentMap: Map<String, List<String>> = emptyMap()
 
     // Prefix index: map from 2-letter normalized prefix to list of words for O(1) prefix lookup
     @Volatile
     private var ptPrefixIndex: Map<String, List<String>> = emptyMap()
     @Volatile
     private var enPrefixIndex: Map<String, List<String>> = emptyMap()
+    @Volatile
+    private var ptOneCharIndex: Map<String, List<String>> = emptyMap()
+    @Volatile
+    private var enOneCharIndex: Map<String, List<String>> = emptyMap()
+    @Volatile
+    private var ptNormalizedByWord: Map<String, String> = emptyMap()
+    @Volatile
+    private var enNormalizedByWord: Map<String, String> = emptyMap()
+    @Volatile
+    private var ptDeletionIndex: Map<String, List<String>> = emptyMap()
+    @Volatile
+    private var enDeletionIndex: Map<String, List<String>> = emptyMap()
+    @Volatile
+    private var ptWordsByNormalized: Map<String, List<String>> = emptyMap()
+    @Volatile
+    private var enWordsByNormalized: Map<String, List<String>> = emptyMap()
+
+    private val combiningMarksRegex = Regex("\\p{InCombiningDiacriticalMarks}+")
 
     @Volatile
     var isInitialized = false
@@ -44,31 +62,47 @@ object WordDictionary {
             val ptWords = ArrayList<String>(35000)
             val ptNormSet = HashSet<String>(35000)
             val ptExactSet = HashSet<String>(35000)
-            val ptAccentMap = HashMap<String, String>(15000)
+            val ptAccentMap = HashMap<String, MutableList<String>>(15000)
             val ptIndex = HashMap<String, MutableList<String>>()
+            val ptOneIndex = HashMap<String, MutableList<String>>()
+            val ptNormalized = HashMap<String, String>(35000)
+            val ptDeletes = HashMap<String, MutableSet<String>>()
+            val ptByNormalized = HashMap<String, MutableSet<String>>()
 
             try {
-                loadLanguageAsset(context, "dict_pt_br.txt", ptWords, ptNormSet, ptExactSet, ptAccentMap, ptIndex)
+                loadLanguageAsset(context, "dict_pt_br.txt", ptWords, ptNormSet, ptExactSet, ptAccentMap, ptIndex, ptOneIndex, ptNormalized, ptDeletes, ptByNormalized)
                 loadedPortugueseWords = ptWords
                 loadedPortugueseNormalizedSet = ptNormSet
                 loadedPortugueseExactSet = ptExactSet
-                loadedPortugueseAccentMap = ptAccentMap
-                ptPrefixIndex = ptIndex
+                loadedPortugueseAccentMap = ptAccentMap.mapValues { it.value.distinct() }
+                ptPrefixIndex = ptIndex.mapValues { it.value.toList() }
+                ptOneCharIndex = ptOneIndex.mapValues { it.value.toList() }
+                ptNormalizedByWord = ptNormalized
+                ptDeletionIndex = ptDeletes.mapValues { it.value.toList() }
+                ptWordsByNormalized = ptByNormalized.mapValues { it.value.toList() }
             } catch (_: Exception) {}
 
             val enWords = ArrayList<String>(25000)
             val enNormSet = HashSet<String>(25000)
             val enExactSet = HashSet<String>(25000)
-            val enAccentMap = HashMap<String, String>(5000)
+            val enAccentMap = HashMap<String, MutableList<String>>(5000)
             val enIndex = HashMap<String, MutableList<String>>()
+            val enOneIndex = HashMap<String, MutableList<String>>()
+            val enNormalized = HashMap<String, String>(25000)
+            val enDeletes = HashMap<String, MutableSet<String>>()
+            val enByNormalized = HashMap<String, MutableSet<String>>()
 
             try {
-                loadLanguageAsset(context, "dict_en_us.txt", enWords, enNormSet, enExactSet, enAccentMap, enIndex)
+                loadLanguageAsset(context, "dict_en_us.txt", enWords, enNormSet, enExactSet, enAccentMap, enIndex, enOneIndex, enNormalized, enDeletes, enByNormalized)
                 loadedEnglishWords = enWords
                 loadedEnglishNormalizedSet = enNormSet
                 loadedEnglishExactSet = enExactSet
-                loadedEnglishAccentMap = enAccentMap
-                enPrefixIndex = enIndex
+                loadedEnglishAccentMap = enAccentMap.mapValues { it.value.distinct() }
+                enPrefixIndex = enIndex.mapValues { it.value.toList() }
+                enOneCharIndex = enOneIndex.mapValues { it.value.toList() }
+                enNormalizedByWord = enNormalized
+                enDeletionIndex = enDeletes.mapValues { it.value.toList() }
+                enWordsByNormalized = enByNormalized.mapValues { it.value.toList() }
             } catch (_: Exception) {}
 
             isInitialized = true
@@ -81,8 +115,12 @@ object WordDictionary {
         targetList: MutableList<String>,
         targetNormSet: MutableSet<String>,
         targetExactSet: MutableSet<String>,
-        targetAccentMap: MutableMap<String, String>,
-        prefixIndex: MutableMap<String, MutableList<String>>
+        targetAccentMap: MutableMap<String, MutableList<String>>,
+        prefixIndex: MutableMap<String, MutableList<String>>,
+        oneCharIndex: MutableMap<String, MutableList<String>>,
+        normalizedByWord: MutableMap<String, String>,
+        deletionIndex: MutableMap<String, MutableSet<String>>,
+        wordsByNormalized: MutableMap<String, MutableSet<String>>
     ) {
         val inputStream = context.assets.open(fileName)
         BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8)).useLines { lines ->
@@ -94,9 +132,14 @@ object WordDictionary {
                     targetExactSet.add(lower)
                     val norm = normalize(lower)
                     targetNormSet.add(norm)
-                    if (!targetAccentMap.containsKey(norm)) {
-                        targetAccentMap[norm] = lower
+                    if (norm != lower) targetAccentMap.getOrPut(norm) { mutableListOf() }.add(lower)
+                    normalizedByWord[lower] = norm
+                    wordsByNormalized.getOrPut(norm) { linkedSetOf() }.add(lower)
+                    for (index in norm.indices) {
+                        val deletion = norm.removeRange(index, index + 1)
+                        deletionIndex.getOrPut(deletion) { linkedSetOf() }.add(lower)
                     }
+                    if (norm.isNotEmpty()) oneCharIndex.getOrPut(norm.substring(0, 1)) { mutableListOf() }.add(lower)
                     if (norm.length >= 2) {
                         val key = norm.substring(0, 2)
                         prefixIndex.getOrPut(key) { mutableListOf() }.add(lower)
@@ -108,7 +151,7 @@ object WordDictionary {
 
     fun normalize(text: String): String {
         val temp = Normalizer.normalize(text, Normalizer.Form.NFD)
-        return temp.replace("\\p{InCombiningDiacriticalMarks}+".toRegex(), "").lowercase()
+        return temp.replace(combiningMarksRegex, "").lowercase()
     }
 
     val fallbackPortugueseWords = listOf(
@@ -127,7 +170,7 @@ object WordDictionary {
         "coração", "verdade", "certeza", "mensagem", "teclado", "aplicativo", "celular", "foto",
         "vídeo", "música", "cidade", "carro", "estrada", "viagem", "reunião", "projeto", "dinheiro",
         "conta", "comida", "café", "almoço", "jantar", "saúde", "sucesso", "parabéns", "abraço",
-        "abraços", "beleza", "legal", "tranquilo", "show", "maravilha", "perfeito", "ótimo", "ótima",
+        "abraços", "beleza", "legal", "tranquilo", "show", "maravilha", "perfeito", "ótimo", "ótima", "avó", "avô",
         "excelente", "falou", "valeu", "tranquila", "fácil", "difícil", "rápido", "rápida",
         "preciso", "precisa", "ajuda", "gente", "pessoas", "nada", "mesmo", "mesma",
         "estou", "estamos", "estão", "somos", "será", "tenho", "temos", "têm", "fui", "vamos",
@@ -183,6 +226,17 @@ object WordDictionary {
 
     @Synchronized
     fun getUserCustomWords(): List<String> = userCustomWords.toList()
+
+    @Synchronized
+    fun addUserCustomWord(word: String) {
+        val clean = word.trim()
+        if (clean.isBlank()) return
+        val normalized = normalize(clean)
+        if (normalized !in userCustomNormalizedSet) {
+            userCustomWords.add(clean)
+            userCustomNormalizedSet.add(normalized)
+        }
+    }
 
     // Set of Portuguese-exclusive markers (words or letter patterns)
     private val portugueseExclusiveWords = setOf(
@@ -301,69 +355,67 @@ object WordDictionary {
 
         val lowerClean = clean.lowercase()
         val normalizedClean = normalize(lowerClean)
+        val customWords = getUserCustomWords()
 
         // 0. If it's a learned / user custom word (e.g. "Kubernetes", "Kotlin", "microserviços"), it's valid!
-        if (userCustomWords.any { it.lowercase() == lowerClean } || userCustomNormalizedSet.contains(normalizedClean)) {
+        if (customWords.any { it.equals(clean, ignoreCase = true) } || userCustomNormalizedSet.contains(normalizedClean)) {
             return null
         }
 
-        // 1. If it's already an exact word in dictionary (e.g. "xícara", "obrigado", "como", "the"), do not change
+        // Restore a unique accent variant ("voce" -> "você", "nao" -> "não").
+        // If multiple accented words share the same unaccented form ("avo" -> "avó"/"avô"), do not guess.
         if (isWordInDictionary(clean, language)) {
-            // Check if it's already in the dictionary with accent or exact matching
-            val exactMatch = when (language) {
-                KeyboardLanguage.PT_BR -> loadedPortugueseExactSet.contains(lowerClean) || fallbackPortugueseWords.any { it.lowercase() == lowerClean }
-                KeyboardLanguage.EN_US -> loadedEnglishExactSet.contains(lowerClean) || fallbackEnglishWords.any { it.lowercase() == lowerClean }
-            }
-            if (exactMatch) return null
-
-            // If it matches normalized form but not exact, check accent restoration (e.g. "voce" -> "você", "xicara" -> "xícara")
-            val accentMap = if (language == KeyboardLanguage.PT_BR) loadedPortugueseAccentMap else loadedEnglishAccentMap
-            val restored = accentMap[normalizedClean] ?: (when (language) {
-                KeyboardLanguage.PT_BR -> fallbackPortugueseWords.firstOrNull { normalize(it) == normalizedClean }
-                KeyboardLanguage.EN_US -> fallbackEnglishWords.firstOrNull { normalize(it) == normalizedClean }
-            })
-            if (restored != null && restored != lowerClean) {
-                return formatCapitalization(restored, clean)
-            }
-            return null
+            val accentlessInput = lowerClean == normalizedClean
+            val accentVariants = accentVariants(normalizedClean, language)
+            val restored = if (accentlessInput) accentVariants.singleOrNull() else null
+            return restored?.let { formatCapitalization(it, clean) }
         }
 
-        val wordList = when (language) {
-            KeyboardLanguage.PT_BR -> portugueseWords
-            KeyboardLanguage.EN_US -> englishWords
-        }
-
-        // 2. Check for words with edit distance == 1 (or 2 for longer words)
-        var bestCandidate: String? = null
-        var minDistance = 999
-        var bestCandidateMatchesFirstChar = false
-
-        val allCandidates = userCustomWords + wordList
-        for (word in allCandidates) {
-            val normalizedDictWord = normalize(word)
-            val lenDiff = kotlin.math.abs(normalizedDictWord.length - normalizedClean.length)
-            if (lenDiff > 2) continue
-
-            val maxAllowedDistance = if (normalizedClean.length >= 5) 2 else 1
-            val distance = levenshteinDistance(normalizedClean, normalizedDictWord, maxAllowedDistance)
-
-            if (distance in 1..maxAllowedDistance) {
-                val matchesFirst = normalizedDictWord.isNotEmpty() && normalizedClean.isNotEmpty() && normalizedDictWord.first() == normalizedClean.first()
-                if (distance < minDistance) {
-                    minDistance = distance
-                    bestCandidate = word
-                    bestCandidateMatchesFirstChar = matchesFirst
-                } else if (distance == minDistance) {
-                    // Prefer candidate matching first character
-                    if (!bestCandidateMatchesFirstChar && matchesFirst) {
-                        bestCandidate = word
-                        bestCandidateMatchesFirstChar = true
-                    }
-                }
+        // Only inspect nearby word lengths and only auto-correct an unambiguous one-edit match.
+        // Ambiguous alternatives remain available as suggestions instead of silently replacing text.
+        val candidates = nearbyWordCandidates(normalizedClean, language)
+        val matches = mutableListOf<String>()
+        for (word in customWords.filterNot { it.contains(' ') } + candidates) {
+            val normalizedWord = cachedNormalize(word, language)
+            if (kotlin.math.abs(normalizedWord.length - normalizedClean.length) > 1) continue
+            if (levenshteinDistance(normalizedClean, normalizedWord, maxAllowed = 1) == 1) {
+                matches.add(word)
             }
         }
 
-        return bestCandidate?.let { formatCapitalization(it, clean) }
+        val preferredMatches = matches.distinct().let { all ->
+            val sameInitial = all.filter { cachedNormalize(it, language).firstOrNull() == normalizedClean.firstOrNull() }
+            if (sameInitial.isNotEmpty()) sameInitial else all
+        }
+        return preferredMatches.singleOrNull()?.let { formatCapitalization(it, clean) }
+    }
+
+    private fun cachedNormalize(word: String, language: KeyboardLanguage): String {
+        val cache = if (language == KeyboardLanguage.PT_BR) ptNormalizedByWord else enNormalizedByWord
+        return cache[word.lowercase()] ?: normalize(word)
+    }
+
+    private fun nearbyWordCandidates(normalizedInput: String, language: KeyboardLanguage): List<String> {
+        val wordList = if (language == KeyboardLanguage.PT_BR) portugueseWords else englishWords
+        val deletionIndex = if (language == KeyboardLanguage.PT_BR) ptDeletionIndex else enDeletionIndex
+        if (deletionIndex.isEmpty()) return wordList
+
+        val wordsByNormalized = if (language == KeyboardLanguage.PT_BR) ptWordsByNormalized else enWordsByNormalized
+        val candidates = LinkedHashSet<String>()
+        deletionIndex[normalizedInput]?.let(candidates::addAll)
+        for (index in normalizedInput.indices) {
+            val shortened = normalizedInput.removeRange(index, index + 1)
+            deletionIndex[shortened]?.let(candidates::addAll)
+            wordsByNormalized[shortened]?.let(candidates::addAll)
+        }
+        return candidates.toList()
+    }
+
+    private fun accentVariants(normalizedWord: String, language: KeyboardLanguage): List<String> {
+        val map = if (language == KeyboardLanguage.PT_BR) loadedPortugueseAccentMap else loadedEnglishAccentMap
+        val fallback = if (language == KeyboardLanguage.PT_BR) fallbackPortugueseWords else fallbackEnglishWords
+        return (map[normalizedWord].orEmpty() + fallback.filter { normalize(it) == normalizedWord && it.lowercase() != normalizedWord })
+            .distinct()
     }
 
     private fun formatCapitalization(targetWord: String, originalInput: String): String {
@@ -421,41 +473,73 @@ object WordDictionary {
         return null
     }
 
-    fun getSuggestions(prefix: String, language: KeyboardLanguage, limit: Int = 3): List<String> {
+    private val portugueseNextWords = mapOf(
+        "bom" to listOf("dia", "trabalho", "apetite"),
+        "boa" to listOf("tarde", "noite", "sorte"),
+        "como" to listOf("você", "vai", "está"),
+        "você" to listOf("está", "pode", "quer"),
+        "eu" to listOf("vou", "quero", "estou", "não", "gosto"),
+        "não" to listOf("sei", "consigo", "quero", "posso", "tem"),
+        "muito" to listOf("obrigado", "obrigada", "bem", "bom"),
+        "preciso" to listOf("de", "falar", "saber"),
+        "gosto" to listOf("de", "muito", "disso"),
+        "tem" to listOf("que", "como", "mais"),
+        "por" to listOf("favor", "isso", "que"),
+        "até" to listOf("logo", "amanhã", "mais"),
+        "valeu" to listOf("mesmo", "pela", "por"),
+        "está" to listOf("bem", "tudo", "certo"),
+        "obrigado" to listOf("por", "pela", "mesmo")
+    )
+
+    private val englishNextWords = mapOf(
+        "good" to listOf("morning", "day", "job"),
+        "how" to listOf("are", "do", "about"),
+        "i" to listOf("am", "will", "want", "can", "have"),
+        "you" to listOf("are", "can", "have", "will"),
+        "thank" to listOf("you", "you!"),
+        "please" to listOf("let", "send", "help"),
+        "have" to listOf("a", "been", "to"),
+        "would" to listOf("like", "you", "be"),
+        "looking" to listOf("for", "forward", "good"),
+        "see" to listOf("you", "it", "the"),
+        "talk" to listOf("to", "soon", "about")
+    )
+
+    fun getSuggestions(
+        prefix: String,
+        language: KeyboardLanguage,
+        limit: Int = 3,
+        previousWord: String? = null
+    ): List<String> {
         val rawClean = prefix.trim()
+        val customWords = getUserCustomWords()
+        val nextWordsMap = if (language == KeyboardLanguage.PT_BR) portugueseNextWords else englishNextWords
+        val nextWords = nextWordsMap[normalize(previousWord.orEmpty())].orEmpty()
+        val contextualMatches = nextWords.filter { candidate ->
+            rawClean.isEmpty() || normalize(candidate).startsWith(normalize(rawClean))
+        }
         if (rawClean.isEmpty()) {
             val defaults = if (language == KeyboardLanguage.PT_BR) {
                 listOf("Olá", "Você", "Como")
             } else {
                 listOf("Hello", "How", "Thanks")
             }
-            return (userCustomWords.take(1) + defaults).distinct().take(limit)
+            return (contextualMatches + customWords.take(1) + defaults).distinct().take(limit)
         }
 
         val cleanPrefix = rawClean.lowercase()
         val normalizedPrefix = normalize(cleanPrefix)
-
-        val wordList = when (language) {
-            KeyboardLanguage.PT_BR -> {
-                if (normalizedPrefix.length >= 2 && ptPrefixIndex.isNotEmpty()) {
-                    val key = normalizedPrefix.substring(0, 2)
-                    ptPrefixIndex[key] ?: emptyList()
-                } else {
-                    portugueseWords
-                }
-            }
-            KeyboardLanguage.EN_US -> {
-                if (normalizedPrefix.length >= 2 && enPrefixIndex.isNotEmpty()) {
-                    val key = normalizedPrefix.substring(0, 2)
-                    enPrefixIndex[key] ?: emptyList()
-                } else {
-                    englishWords
-                }
-            }
+        val wordList = if (language == KeyboardLanguage.PT_BR) portugueseWords else englishWords
+        val prefixIndex = if (language == KeyboardLanguage.PT_BR) ptPrefixIndex else enPrefixIndex
+        val oneCharIndex = if (language == KeyboardLanguage.PT_BR) ptOneCharIndex else enOneCharIndex
+        val normalizedMap = if (language == KeyboardLanguage.PT_BR) ptNormalizedByWord else enNormalizedByWord
+        val candidates = when {
+            normalizedPrefix.length >= 2 && prefixIndex.isNotEmpty() -> prefixIndex[normalizedPrefix.substring(0, 2)].orEmpty()
+            normalizedPrefix.length == 1 && oneCharIndex.isNotEmpty() -> oneCharIndex[normalizedPrefix].orEmpty()
+            else -> wordList
         }
-
         val customMatches = mutableListOf<String>()
-        for (custom in userCustomWords) {
+        for (custom in customWords) {
             val lowerCustom = custom.lowercase()
             val normCustom = normalize(lowerCustom)
             if (lowerCustom == cleanPrefix || normCustom == normalizedPrefix || lowerCustom.startsWith(cleanPrefix) || normCustom.startsWith(normalizedPrefix)) {
@@ -468,9 +552,9 @@ object WordDictionary {
         val prefixMatches = mutableListOf<String>()
         val prefixNormalizedMatches = mutableListOf<String>()
 
-        for (word in wordList) {
+        for (word in candidates) {
             val lowerWord = word.lowercase()
-            val normalizedWord = normalize(lowerWord)
+            val normalizedWord = normalizedMap[lowerWord] ?: normalize(lowerWord)
 
             if (lowerWord == cleanPrefix) {
                 exactMatches.add(word)
@@ -482,17 +566,37 @@ object WordDictionary {
                 prefixNormalizedMatches.add(word)
             }
 
-            if (exactMatches.size + exactNormalizedMatches.size + prefixMatches.size >= limit * 3) {
+            if (exactMatches.size + exactNormalizedMatches.size + prefixMatches.size + prefixNormalizedMatches.size >= limit * 4) {
                 break
             }
         }
 
         val results = mutableListOf<String>()
         results.addAll(customMatches)
-        results.addAll(exactMatches)
-        results.addAll(exactNormalizedMatches)
-        results.addAll(prefixMatches)
-        results.addAll(prefixNormalizedMatches)
+        if (cleanPrefix == normalizedPrefix) {
+            results.addAll(exactNormalizedMatches)
+            results.addAll(prefixNormalizedMatches)
+            results.addAll(exactMatches)
+            results.addAll(prefixMatches)
+        } else {
+            results.addAll(exactMatches)
+            results.addAll(prefixMatches)
+            results.addAll(exactNormalizedMatches)
+            results.addAll(prefixNormalizedMatches)
+        }
+
+        results.addAll(0.coerceAtMost(results.size), contextualMatches)
+
+        if (results.isEmpty() && normalizedPrefix.length >= 3) {
+            val nearWords = nearbyWordCandidates(normalizedPrefix, language)
+            for (word in nearWords) {
+                val normalizedWord = normalizedMap[word.lowercase()] ?: normalize(word)
+                if (levenshteinDistance(normalizedPrefix, normalizedWord, maxAllowed = 1) == 1) {
+                    results.add(word)
+                    if (results.size >= limit) break
+                }
+            }
+        }
 
         val isCapitalized = rawClean.isNotEmpty() && rawClean[0].isUpperCase()
         val formatted = results.distinct().take(limit).map { word ->
@@ -510,4 +614,3 @@ object WordDictionary {
         }
     }
 }
-

@@ -130,6 +130,8 @@ import com.example.keyboard.model.KeySizeMode
 import com.example.keyboard.model.KeyboardLanguage
 import com.example.keyboard.model.KeyboardSettings
 import com.example.keyboard.model.KeyboardThemeType
+import com.example.keyboard.ui.KeyHexagonShape
+import com.example.keyboard.reader.FloatingReaderPreferences
 import com.example.keyboard.ui.KeyboardMainView
 import kotlinx.coroutines.delay
 
@@ -161,6 +163,8 @@ fun SettingsScreen(
 
     var isImeEnabledInSystem by remember { mutableStateOf(false) }
     var isImeSelectedAsDefault by remember { mutableStateOf(false) }
+    var isFloatingReaderEnabled by remember { mutableStateOf(FloatingReaderPreferences.isEnabled(context)) }
+    var isFloatingReaderServiceEnabled by remember { mutableStateOf(FloatingReaderPreferences.isAccessibilityServiceEnabled(context)) }
 
     var hasAudioPermission by remember {
         mutableStateOf(
@@ -233,11 +237,17 @@ fun SettingsScreen(
         isImeSelectedAsDefault = defaultIme.contains(packageName)
     }
 
+    fun checkFloatingReaderStatus() {
+        isFloatingReaderEnabled = FloatingReaderPreferences.isEnabled(context)
+        isFloatingReaderServiceEnabled = FloatingReaderPreferences.isAccessibilityServiceEnabled(context)
+    }
+
     // Auto-check on lifecycle resume
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 checkImeStatus()
+                checkFloatingReaderStatus()
                 hasAudioPermission = ContextCompat.checkSelfPermission(
                     context,
                     Manifest.permission.RECORD_AUDIO
@@ -405,6 +415,28 @@ fun SettingsScreen(
                 )
             }
 
+            item {
+                FloatingReaderControlCard(
+                    isEnabled = isFloatingReaderEnabled,
+                    isAccessibilityServiceEnabled = isFloatingReaderServiceEnabled,
+                    onToggle = { enabled ->
+                        FloatingReaderPreferences.setEnabled(context, enabled)
+                        isFloatingReaderEnabled = enabled
+                        if (enabled && !isFloatingReaderServiceEnabled) {
+                            Toast.makeText(
+                                context,
+                                "Ative o Leitor flutuante nesta tela de Acessibilidade para mostrar a bolha.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        }
+                    },
+                    onOpenAccessibilitySettings = {
+                        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    }
+                )
+            }
+
             // 3. Statistics Preview Dashboard Card
             item {
                 StatisticsSummaryCard(
@@ -457,6 +489,7 @@ fun SettingsScreen(
                     onAccentChange = { repository.setAccentColorType(it) },
                     onKeyShapeChange = { repository.setKeyShapeStyle(it) },
                     onAdaptiveThemeToggle = { repository.setAdaptiveThemeEnabled(it) },
+                    onLedEffectToggle = { repository.setLedEffectEnabled(it) },
                     onKeySeparationToggle = { repository.setKeySeparationEnabled(it) },
                     onKeySizeModeChange = { repository.setKeySizeMode(it) }
                 )
@@ -1535,6 +1568,7 @@ private fun ThemeCustomizationCard(
     onAccentChange: (AccentColorType) -> Unit,
     onKeyShapeChange: (KeyShapeStyle) -> Unit,
     onAdaptiveThemeToggle: (Boolean) -> Unit,
+    onLedEffectToggle: (Boolean) -> Unit,
     onKeySeparationToggle: (Boolean) -> Unit,
     onKeySizeModeChange: (KeySizeMode) -> Unit
 ) {
@@ -1694,6 +1728,7 @@ private fun ThemeCustomizationCard(
                         ) {
                             rowStyles.forEach { style ->
                                 val isSelected = settings.keyShapeStyle == style
+                                val previewShape = if (style == KeyShapeStyle.HEXAGON) KeyHexagonShape else RoundedCornerShape(style.cornerRadiusDp.dp)
                                 Card(
                                     colors = CardDefaults.cardColors(
                                         containerColor = if (isSelected) Color(0x28818CF8) else Color(0x110F172A)
@@ -1723,10 +1758,10 @@ private fun ThemeCustomizationCard(
                                             Box(
                                                 modifier = Modifier
                                                     .size(24.dp, 20.dp)
-                                                    .clip(RoundedCornerShape(style.cornerRadiusDp.dp))
+                                                    .clip(previewShape)
                                                     .background(if (isSelected) Color(0xFF38BDF8) else Color(0x55818CF8))
                                                     .then(
-                                                        if (style.hasElevation) Modifier.border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(style.cornerRadiusDp.dp))
+                                                        if (style.hasElevation) Modifier.border(1.dp, Color.White.copy(alpha = 0.4f), previewShape)
                                                         else Modifier
                                                     ),
                                                 contentAlignment = Alignment.Center
@@ -1760,6 +1795,16 @@ private fun ThemeCustomizationCard(
                     }
                 }
             }
+
+            HorizontalDivider(color = Color(0x33818CF8))
+
+            PreferenceSwitchRow(
+                icon = Icons.Default.ColorLens,
+                title = "Efeito LED / RGB nas teclas",
+                subtitle = "Contorno em gradiente RGB com destaque ao toque; não usa iluminação física do aparelho.",
+                checked = settings.ledEffectEnabled,
+                onCheckedChange = onLedEffectToggle
+            )
 
             HorizontalDivider(color = Color(0x33818CF8))
 
@@ -2222,6 +2267,89 @@ private fun PrivacyInfoCard() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 16.sp
             )
+        }
+    }
+}
+
+
+@Composable
+private fun FloatingReaderControlCard(
+    isEnabled: Boolean,
+    isAccessibilityServiceEnabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+    onOpenAccessibilitySettings: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0x181E293B)),
+        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Color(0x22818CF8), RoundedCornerShape(18.dp))
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.VolumeUp,
+                    contentDescription = null,
+                    tint = Color(0xFF38BDF8),
+                    modifier = Modifier.size(22.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Leitor flutuante", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(
+                        if (isEnabled) "Bolha solicitada: ligada" else "Bolha desligada",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = isEnabled, onCheckedChange = onToggle)
+            }
+
+            Text(
+                text = "Ative a bolha e arraste-a sobre o texto; ao soltar, o leitor tenta ler o conteúdo acessível naquela área em voz alta. Em repouso, ela fica translúcida e volta a ficar opaca quando você toca nela.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 17.sp
+            )
+            Text(
+                text = "Para funcionar em outros apps, é necessário ativar manualmente o serviço nas configurações de Acessibilidade. Esse serviço pode examinar o texto visível da tela; a leitura só é solicitada ao arrastar e soltar a bolha. A voz usa o mecanismo TTS configurado no aparelho, cujas opções de rede dependem do próprio mecanismo.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 17.sp
+            )
+
+            if (isEnabled && !isAccessibilityServiceEnabled) {
+                FilledTonalButton(
+                    onClick = onOpenAccessibilitySettings,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Ativar serviço nas configurações de Acessibilidade")
+                }
+            } else if (isAccessibilityServiceEnabled) {
+                Text(
+                    text = if (isEnabled) {
+                        "Serviço do Android ativado. A bolha aparecerá enquanto o recurso estiver ligado."
+                    } else {
+                        "A bolha está desligada no app, mas o serviço continua autorizado pelo Android. Use o botão abaixo para desativar o serviço completamente."
+                    },
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 17.sp
+                )
+                FilledTonalButton(
+                    onClick = onOpenAccessibilitySettings,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Gerenciar serviço de Acessibilidade")
+                }
+            }
         }
     }
 }

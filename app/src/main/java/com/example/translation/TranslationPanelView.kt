@@ -61,12 +61,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.keyboard.model.KeyboardThemeColors
 import com.google.mlkit.nl.translate.TranslateLanguage
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 @Composable
 fun TranslationPanelView(
     translationManager: TranslationManager,
     colors: KeyboardThemeColors,
     initialText: String = "",
+    inputText: String = initialText,
+    onInputTextChange: (String) -> Unit = {},
     onInsertText: (String) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
@@ -78,9 +81,9 @@ fun TranslationPanelView(
     var sourceLang by remember { mutableStateOf(TranslateLanguage.PORTUGUESE) }
     var targetLang by remember { mutableStateOf(TranslateLanguage.ENGLISH) }
 
-    var inputText by remember { mutableStateOf(initialText) }
     var translatedText by remember { mutableStateOf("") }
     var isTranslating by remember { mutableStateOf(false) }
+    var translationError by remember { mutableStateOf<String?>(null) }
 
     var sourceMenuExpanded by remember { mutableStateOf(false) }
     var targetMenuExpanded by remember { mutableStateOf(false) }
@@ -92,23 +95,33 @@ fun TranslationPanelView(
         translationManager.checkModelsDownloaded(sourceLang, targetLang)
     }
 
-    // Auto-translate on input change or language change if models are ready
+    // Debounce keystrokes so model inference doesn't compete with keyboard input.
     LaunchedEffect(inputText, sourceLang, targetLang, areBothModelsReady) {
         if (inputText.isNotBlank() && areBothModelsReady) {
+            translationError = null
+            delay(300)
             isTranslating = true
-            val res = translationManager.translate(inputText, sourceLang, targetLang)
-            isTranslating = false
-            res.onSuccess { translatedText = it }
-                .onFailure { translatedText = "" }
+            try {
+                val result = translationManager.translate(inputText, sourceLang, targetLang)
+                result.onSuccess { translatedText = it; translationError = null }
+                    .onFailure { translatedText = ""; translationError = it.localizedMessage ?: "Falha ao traduzir." }
+            } finally {
+                isTranslating = false
+            }
         } else if (inputText.isBlank()) {
             translatedText = ""
+            translationError = null
+            isTranslating = false
+        } else {
+            translatedText = ""
+            isTranslating = false
         }
     }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .height(290.dp)
+            .height(220.dp)
             .background(colors.background)
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
@@ -344,15 +357,17 @@ fun TranslationPanelView(
                                 modifier = Modifier
                                     .size(16.dp)
                                     .clickable {
-                                        inputText = ""
+                                        onInputTextChange("")
                                         translatedText = ""
+                                        translationError = null
                                     }
                             )
                         }
                     }
                     OutlinedTextField(
                         value = inputText,
-                        onValueChange = { inputText = it },
+                        onValueChange = onInputTextChange,
+                        readOnly = true,
                         placeholder = { Text("Digite para traduzir...", fontSize = 12.sp, color = colors.keySecondaryTextColor) },
                         modifier = Modifier.fillMaxSize().testTag("trans_input_field"),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -412,9 +427,9 @@ fun TranslationPanelView(
                             )
                         } else {
                             Text(
-                                text = if (!areBothModelsReady) "Baixe os modelos acima para traduzir offline" else "A tradução aparecerá aqui...",
+                                text = translationError ?: if (!areBothModelsReady) "Baixe os modelos acima para traduzir offline" else "A tradução aparecerá aqui...",
                                 fontSize = 11.sp,
-                                color = colors.keySecondaryTextColor
+                                color = if (translationError != null) MaterialTheme.colorScheme.error else colors.keySecondaryTextColor
                             )
                         }
                     }

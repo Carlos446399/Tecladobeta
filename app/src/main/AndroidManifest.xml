@@ -81,6 +81,19 @@
                 android:resource="@xml/method" />
         </service>
 
+        <service
+            android:name=".keyboard.reader.FloatingReaderAccessibilityService"
+            android:label="@string/floating_reader_service_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/floating_reader_accessibility" />
+        </service>
+
     </application>
 
 </manifest>

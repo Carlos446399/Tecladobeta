@@ -8,6 +8,7 @@ import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,6 +17,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class SupportedLanguage(
     val code: String,
@@ -41,6 +44,8 @@ class TranslationManager private constructor(private val context: Context) {
 
     private var activeTranslator: Translator? = null
     private var activePair: Pair<String, String>? = null
+    private val translatorMutex = Mutex()
+    @Volatile private var modelCheckGeneration = 0
 
     val supportedLanguages = listOf(
         SupportedLanguage(TranslateLanguage.PORTUGUESE, "Português", "🇧🇷"),
@@ -52,6 +57,14 @@ class TranslationManager private constructor(private val context: Context) {
     )
 
     fun checkModelsDownloaded(sourceLang: String, targetLang: String) {
+        val generation = synchronized(this) { ++modelCheckGeneration }
+        _status.value = _status.value.copy(
+            isSourceDownloaded = false,
+            isTargetDownloaded = false,
+            isDownloading = false,
+            downloadProgressText = "",
+            error = null
+        )
         scope.launch {
             try {
                 val sourceModel = TranslateRemoteModel.Builder(sourceLang).build()
@@ -60,13 +73,17 @@ class TranslationManager private constructor(private val context: Context) {
                 val isSourceDown = modelManager.isModelDownloaded(sourceModel).await()
                 val isTargetDown = modelManager.isModelDownloaded(targetModel).await()
 
-                _status.value = _status.value.copy(
-                    isSourceDownloaded = isSourceDown,
-                    isTargetDownloaded = isTargetDown,
-                    error = null
-                )
+                if (generation == modelCheckGeneration) {
+                    _status.value = _status.value.copy(
+                        isSourceDownloaded = isSourceDown,
+                        isTargetDownloaded = isTargetDown,
+                        error = null
+                    )
+                }
             } catch (e: Exception) {
-                _status.value = _status.value.copy(error = e.localizedMessage)
+                if (generation == modelCheckGeneration) {
+                    _status.value = _status.value.copy(error = e.localizedMessage ?: "Não foi possível verificar os modelos.")
+                }
             }
         }
     }
@@ -130,24 +147,28 @@ class TranslationManager private constructor(private val context: Context) {
     ): Result<String> {
         val clean = text.trim()
         if (clean.isEmpty()) return Result.success("")
+        if (sourceLang == targetLang) return Result.success(clean)
 
-        return try {
-            val pair = Pair(sourceLang, targetLang)
-            if (activePair != pair || activeTranslator == null) {
-                activeTranslator?.close()
-                val options = TranslatorOptions.Builder()
-                    .setSourceLanguage(sourceLang)
-                    .setTargetLanguage(targetLang)
-                    .build()
-                activeTranslator = Translation.getClient(options)
-                activePair = pair
+        return translatorMutex.withLock {
+            try {
+                val pair = Pair(sourceLang, targetLang)
+                if (activePair != pair || activeTranslator == null) {
+                    activeTranslator?.close()
+                    val options = TranslatorOptions.Builder()
+                        .setSourceLanguage(sourceLang)
+                        .setTargetLanguage(targetLang)
+                        .build()
+                    activeTranslator = Translation.getClient(options)
+                    activePair = pair
+                }
+
+                val translator = activeTranslator!!
+                Result.success(translator.translate(clean).await())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
             }
-
-            val translator = activeTranslator!!
-            val translated = translator.translate(clean).await()
-            Result.success(translated)
-        } catch (e: Exception) {
-            Result.failure(e)
         }
     }
 
